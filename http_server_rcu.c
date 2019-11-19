@@ -24,13 +24,13 @@ struct headers {
 };
 
 struct server {
-	struct list_head	__rcu	*clients;
+	struct list_head		clients;
 	struct headers		__rcu	*headers;
 	struct state		__rcu	*state;
 	struct time		__rcu	*update_timestamp;
 } server;
 
-inline int initialize_time(void) {
+static inline int initialize_time(void) {
 	struct time *time;
 
 	time = kmalloc(sizeof(*time), GFP_KERNEL);
@@ -46,7 +46,7 @@ inline int initialize_time(void) {
 	return 0;
 }
 
-inline int initialize_state(void) {
+static inline int initialize_state(void) {
 	struct state *state;
 
 	state = kmalloc(sizeof(*state), GFP_KERNEL);
@@ -62,7 +62,7 @@ inline int initialize_state(void) {
 	return 0;
 }
 
-inline int initialize_headers(void) {
+static inline int initialize_headers(void) {
 	struct headers *headers;
 
 	headers = kmalloc(sizeof(*headers), GFP_KERNEL);
@@ -80,8 +80,24 @@ inline int initialize_headers(void) {
 	return 0;
 }
 
-inline int initialize_server(void) {
-	INIT_LIST_HEAD_RCU(server.clients);
+static inline int initialize_server(void) {
+	int err;
+	// INIT_LIST_HEAD_RCU(server.clients);
+	LIST_HEAD_INIT_RCU(server.clients);
+
+	err = initialize_headers();
+	if(err) goto err;
+
+	err = initialize_state();
+	if(err) goto err;
+
+	err = initialize_time();
+	if(err) goto err;
+
+	return 0;
+
+err:
+	return err;
 }
 
 static int __init http_server_rcu_init(void) {
