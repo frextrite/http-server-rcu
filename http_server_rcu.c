@@ -30,6 +30,22 @@ struct server {
 	struct time		__rcu	*update_timestamp;
 } server;
 
+inline int initialize_time(void) {
+	struct time *time;
+
+	time = kmalloc(sizeof(*time), GFP_KERNEL);
+
+	if(time == NULL) {
+		return -ENOMEM;
+	}
+
+	time->time = 0;
+
+	rcu_assign_pointer(server.update_timestamp, time);
+
+	return 0;
+}
+
 inline int initialize_state(void) {
 	struct state *state;
 
