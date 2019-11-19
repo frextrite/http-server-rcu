@@ -5,6 +5,10 @@
 #include <linux/rculist.h>
 #include <linux/rcupdate.h>
 #include <linux/slab.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
+
+#define RECOVERY_SLEEP_TIME 30
 
 struct state {
 	bool is_in_recovery;
@@ -33,6 +37,8 @@ struct server {
 };
 
 static struct server server;
+DEFINE_SPINLOCK(server_mutex);
+DEFINE_SPINLOCK(state_mutex);
 
 static inline int initialize_time(void) {
 	struct time *time;
@@ -102,6 +108,33 @@ static inline int initialize_server(void) {
 
 err:
 	return err;
+}
+
+static inline int setup_client(void *data) {
+	struct headers *headers;
+	bool is_in_recovery;
+	int timeout;
+
+	while(!kthread_should_stop()) {
+		rcu_read_lock();
+		is_in_recovery = rcu_dereference(server.state)->is_in_recovery;
+		if(is_in_recovery) {
+			rcu_read_unlock();
+			msleep(RECOVERY_SLEEP_TIME*1000);
+			continue;
+		}
+
+		headers = rcu_dereference(server.headers);
+		printk(KERN_INFO "CORS: %d\nContent-Type: %d\nTimeout:%d",
+				headers->cors, headers->content_type, headers->timeout);
+
+		timeout = headers->timeout;
+		rcu_read_unlock();
+
+		msleep(timeout*1000);
+	}
+
+	do_exit(0);
 }
 
 static int __init http_server_rcu_init(void) {
