@@ -3,6 +3,8 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/rculist.h>
+#include <linux/rcupdate.h>
+#include <linux/slab.h>
 
 struct state {
 	bool is_in_recovery;
@@ -28,7 +30,9 @@ struct server {
 	struct headers		__rcu	*headers;
 	struct state		__rcu	*state;
 	struct time		__rcu	*update_timestamp;
-} server;
+};
+
+static struct server server;
 
 static inline int initialize_time(void) {
 	struct time *time;
@@ -82,8 +86,8 @@ static inline int initialize_headers(void) {
 
 static inline int initialize_server(void) {
 	int err;
-	// INIT_LIST_HEAD_RCU(server.clients);
-	LIST_HEAD_INIT_RCU(server.clients);
+
+	INIT_LIST_HEAD(&server.clients);
 
 	err = initialize_headers();
 	if(err) goto err;
