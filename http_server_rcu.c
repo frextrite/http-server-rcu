@@ -31,6 +31,21 @@ struct server {
 } server;
 
 inline int initialize_headers(void) {
+	struct headers *headers;
+
+	headers = kmalloc(sizeof(*headers), GFP_KERNEL);
+
+	if(headers == NULL) {
+		return -ENOMEM;
+	}
+
+	headers->cors = true;
+	headers->content_type = 3;
+	headers->timeout = 5;
+
+	rcu_assign_pointer(server.headers, headers);
+
+	return 0;
 }
 
 inline int initialize_server(void) {
