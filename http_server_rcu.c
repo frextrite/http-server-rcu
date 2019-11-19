@@ -12,6 +12,7 @@
 
 struct state {
 	bool is_in_recovery;
+	struct rcu_head rcu;
 };
 
 struct time {
@@ -135,6 +136,31 @@ static inline int setup_client(void *data) {
 	}
 
 	do_exit(0);
+}
+
+int set_mode_recovery(void *data) {
+	struct state *old_state;
+	struct state *new_state;
+	bool status = *(bool*)data;
+
+	spin_lock(&state_mutex);
+	old_state = rcu_dereference_protected(server.state,
+						lockdep_is_held(&state_mutex));
+
+	if(old_state->is_in_recovery) {
+		spin_unlock(&state_mutex);
+		goto exit;
+	}
+
+	new_state = kmalloc(sizeof(*new_state), GFP_ATOMIC);
+
+	new_state->is_in_recovery = status;
+	rcu_assign_pointer(server.state, new_state);
+	spin_unlock(&state_mutex);
+
+	kfree_rcu(old_state, rcu);
+exit:
+	return 0;
 }
 
 static int __init http_server_rcu_init(void) {
