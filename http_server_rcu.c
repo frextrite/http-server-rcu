@@ -138,23 +138,22 @@ static inline int setup_client(void *data) {
 	do_exit(0);
 }
 
-static inline int set_mode_recovery(void *data) {
+static inline int set_mode_recovery(bool flag) {
 	struct state *old_state;
 	struct state *new_state;
-	bool status = *(bool*)data;
 
 	spin_lock(&state_mutex);
 	old_state = rcu_dereference_protected(server.state,
 						lockdep_is_held(&state_mutex));
 
-	if(old_state->is_in_recovery) {
+	if(old_state->is_in_recovery == flag) {
 		spin_unlock(&state_mutex);
 		goto exit;
 	}
 
 	new_state = kmalloc(sizeof(*new_state), GFP_ATOMIC);
 
-	new_state->is_in_recovery = status;
+	new_state->is_in_recovery = flag;
 	rcu_assign_pointer(server.state, new_state);
 	spin_unlock(&state_mutex);
 
