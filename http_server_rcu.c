@@ -158,7 +158,7 @@ static inline void set_mode_recovery(bool flag) {
 
 	spin_lock(&state_mutex);
 	current_state = rcu_dereference_protected(server.state,
-						lockdep_is_held(&state_mutex));
+			lockdep_is_held(&state_mutex));
 
 	if(current_state->is_in_recovery == flag) {
 		spin_unlock(&state_mutex);
@@ -169,8 +169,58 @@ static inline void set_mode_recovery(bool flag) {
 	spin_unlock(&state_mutex);
 }
 
-static inline void recover_server(void) {
+static inline int recover_server(void) {
+	struct web_data *web_data;
+	struct web_data *new_web_data;
+	struct time *update_timestamp;
+
+	/*
+	 * No concurrent readers hence we can directly update the data
+	 * */
+	spin_lock(&server_mutex);
+	web_data = rcu_dereference_protected(server.web_data,
+			lockdep_is_held(&server_mutex));
+
+	new_web_data = kmalloc(sizeof(*new_web_data), GFP_KERNEL);
+
+	if(new_web_data == NULL) {
+		return -ENOMEM;
+	}
+
+	new_web_data->message = (1<<(web_data->message));
+	rcu_head_init(&new_web_data->rcu);
+
+	rcu_assign_pointer(server.web_data, new_web_data);
+
+	/*
+	 * Note: we cannot use the following assignment since,
+	 * below we need to use web_data->message to update the timestamp.
+	 *
+	 * If we'd used the following assignment and later used
+	 * update_timestamp->time = web_data->message+1
+	 * we might have gotten inconsistent data due to CPU/compiler
+	 * reordering.
+	 *
+	 * PS: creating a simple variable would've solved this problem but RCU
+	 * can also handle this!
+	 * */
+	// web_data->message = (1<<web_data->message);
+
+	/*
+	 * This is a simple example, but sadly recovering a failed system
+	 * doesn't take a few nanoseconds.
+	 * */
 	msleep(TIME_TO_RECOVER*1000);
+
+	update_timestamp = rcu_dereference_protected(server.update_timestamp,
+			lockdep_is_held(&server_mutex));
+	update_timestamp->time = web_data->message ^ update_timestamp->time;
+
+	spin_unlock(&server_mutex);
+
+	kfree_rcu(web_data, rcu);
+
+	return 0;
 }
 
 /*
