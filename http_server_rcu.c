@@ -9,6 +9,7 @@
 #include <linux/delay.h>
 
 #define RECOVERY_SLEEP_TIME 30
+#define TIME_TO_RECOVER 10
 
 struct state {
 	bool is_in_recovery;
@@ -113,14 +114,14 @@ err:
 /*
  * This probably means we are in recovery, hence server.web_data may be in an
  * inconsistent state hence cannot dereference the data. */
-static inline void send_data_carefully() {
+static inline void send_data_carefully(void) {
 	printk(KERN_INFO "Data:\nStatus Code: 438\nMode: Recovery\n");
 }
 
 /*
  * Conditions are normal, and we are being executed in a read section
  * we can dereference the data and send it. */
-static inline void send_data() {
+static inline void send_data(void) {
 	struct web_data *web_data = rcu_dereference_check(server.web_data,
 							rcu_read_lock_held());
 
@@ -128,6 +129,8 @@ static inline void send_data() {
 			web_data->message);
 }
 
+/*
+ * Client thread */
 static inline int setup_client(void *data) {
 	struct web_data *web_data;
 	bool is_in_recovery;
@@ -139,7 +142,7 @@ static inline int setup_client(void *data) {
 		if(is_in_recovery) {
 			send_data_carefully();
 		} else {
-			sent_data();
+			send_data();
 		}
 		rcu_read_unlock();
 	
@@ -149,7 +152,7 @@ static inline int setup_client(void *data) {
 	do_exit(0);
 }
 
-static inline int set_mode_recovery(bool flag) {
+static inline void set_mode_recovery(bool flag) {
 	struct state *current_state;
 
 	spin_lock(&state_mutex);
@@ -158,14 +161,64 @@ static inline int set_mode_recovery(bool flag) {
 
 	if(current_state->is_in_recovery == flag) {
 		spin_unlock(&state_mutex);
-		goto exit;
+		return;
 	}
 
 	current_state->is_in_recovery = flag;
 	spin_unlock(&state_mutex);
+}
 
-exit:
-	return 0;
+static inline void recover_server(void) {
+	msleep(TIME_TO_RECOVER*1000);
+}
+
+/*
+ * Thread created for recovering the server.
+ *
+ * The recovery of the system takes a lot of time to complete,
+ * during which server.web_data may remain in an inconsistent state,
+ * i.e., sending the data from server.web_data may be disastrous.
+ *
+ * To overcome this we first set the state to recovery, so that,
+ * the server doesn't send the data from server.web_data
+ * (send_data_carefully()),
+ * post which we can work on fixing the problem. During this time, the system
+ * will never read from server.web_data (inconsistent data).
+ * */
+static inline int recover_system_thread(void *data) {
+	while(!kthread_should_stop()) {
+		msleep(10*1000);
+
+		set_mode_recovery(true);
+
+		/*
+		 * This synchronize_rcu() is important before modifying server.web_data
+		 *
+		 * This instructs all the on going reader sections to exit.
+		 *
+		 * If this were not the case, the system would continue to access and
+		 * send data from server.web_data which now is in inconsistent state.
+		 *
+		 * But now, after this statement is executed, all the readers will see
+		 * the updated state (recovery) and none of them would send inconsistent
+		 * data.
+		 *
+		 * See setup_client()
+		 * */
+		synchronize_rcu();
+
+		/*
+		 * Fix the corrupt data.
+		 * */
+		recover_server();
+
+		/*
+		 * Recovery is done. Readers can now access server.web_data.
+		 * */
+		set_mode_recovery(false);
+	}
+
+	do_exit(0);
 }
 
 static int __init http_server_rcu_init(void) {
