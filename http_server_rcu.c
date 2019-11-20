@@ -119,18 +119,12 @@ static inline int setup_client(void *data) {
 		rcu_read_lock();
 		is_in_recovery = rcu_dereference(server.state)->is_in_recovery;
 		if(is_in_recovery) {
-			rcu_read_unlock();
-			msleep(RECOVERY_SLEEP_TIME*1000);
-			continue;
+			send_data_carefully();
+		} else {
+			sent_data();
 		}
-
-		/*headers = rcu_dereference(server.headers);
-		printk(KERN_INFO "CORS: %d\nContent-Type: %d\nTimeout:%d",
-				headers->cors, headers->content_type, headers->timeout);
-
-		timeout = headers->timeout;*/
 		rcu_read_unlock();
-
+	
 		msleep(RECOVERY_SLEEP_TIME*1000);
 	}
 
