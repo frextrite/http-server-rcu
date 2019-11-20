@@ -66,6 +66,7 @@ static inline int initialize_state(void) {
 	}
 
 	state->is_in_recovery = false;
+	rcu_head_init(&state->rcu);
 
 	rcu_assign_pointer(server.state, state);
 
@@ -82,6 +83,7 @@ static inline int initialize_web_data(void) {
 	}
 
 	web_data->message = 0;
+	rcu_head_init(&web_data->rcu);
 
 	rcu_assign_pointer(server.web_data, web_data);
 
