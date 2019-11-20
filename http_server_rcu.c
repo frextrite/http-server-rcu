@@ -10,6 +10,7 @@
 
 #define RECOVERY_SLEEP_TIME 30
 #define TIME_TO_RECOVER 10
+#define TIME_BEFORE_RECOVERY 10
 
 struct state {
 	bool is_in_recovery;
@@ -187,7 +188,7 @@ static inline void recover_server(void) {
  * */
 static inline int recover_system_thread(void *data) {
 	while(!kthread_should_stop()) {
-		msleep(10*1000);
+		msleep(TIME_BEFORE_RECOVERY);
 
 		set_mode_recovery(true);
 
@@ -216,6 +217,9 @@ static inline int recover_system_thread(void *data) {
 		 * Recovery is done. Readers can now access server.web_data.
 		 * */
 		set_mode_recovery(false);
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule();
 	}
 
 	do_exit(0);
