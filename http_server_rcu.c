@@ -110,6 +110,24 @@ err:
 	return err;
 }
 
+/*
+ * This probably means we are in recovery, hence server.web_data may be in an
+ * inconsistent state hence cannot dereference the data. */
+static inline void send_data_carefully() {
+	printk(KERN_INFO "Data:\nStatus Code: 438\nMode: Recovery\n");
+}
+
+/*
+ * Conditions are normal, and we are being executed in a read section
+ * we can dereference the data and send it. */
+static inline void send_data() {
+	struct web_data *web_data = rcu_dereference_check(server.web_data,
+							rcu_read_lock_held());
+
+	printk(KERN_INFO "Data:\nStatus Code: 200\nMode: Normal\nData: %d\n",
+			web_data->message);
+}
+
 static inline int setup_client(void *data) {
 	struct web_data *web_data;
 	bool is_in_recovery;
