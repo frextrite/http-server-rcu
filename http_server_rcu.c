@@ -24,15 +24,14 @@ struct client {
 	struct list_head __rcu *clients_list;
 };
 
-struct headers {
-	bool cors;
-	int content_type;
-	int timeout;
+struct web_data {
+	int message;
+	struct rcu_head rcu;
 };
 
 struct server {
 	struct list_head		clients;
-	struct headers		__rcu	*headers;
+	struct web_data		__rcu	*web_data;
 	struct state		__rcu	*state;
 	struct time		__rcu	*update_timestamp;
 };
@@ -73,20 +72,18 @@ static inline int initialize_state(void) {
 	return 0;
 }
 
-static inline int initialize_headers(void) {
-	struct headers *headers;
+static inline int initialize_web_data(void) {
+	struct web_data *web_data;
 
-	headers = kmalloc(sizeof(*headers), GFP_KERNEL);
+	web_data = kmalloc(sizeof(*web_data), GFP_KERNEL);
 
-	if(headers == NULL) {
+	if(web_data == NULL) {
 		return -ENOMEM;
 	}
 
-	headers->cors = true;
-	headers->content_type = 3;
-	headers->timeout = 5;
+	web_data->message = 0;
 
-	rcu_assign_pointer(server.headers, headers);
+	rcu_assign_pointer(server.web_data, web_data);
 
 	return 0;
 }
@@ -96,7 +93,7 @@ static inline int initialize_server(void) {
 
 	INIT_LIST_HEAD(&server.clients);
 
-	err = initialize_headers();
+	err = initialize_web_data();
 	if(err) goto err;
 
 	err = initialize_state();
@@ -112,7 +109,7 @@ err:
 }
 
 static inline int setup_client(void *data) {
-	struct headers *headers;
+	struct web_data *web_data;
 	bool is_in_recovery;
 	int timeout;
 
@@ -125,14 +122,14 @@ static inline int setup_client(void *data) {
 			continue;
 		}
 
-		headers = rcu_dereference(server.headers);
+		/*headers = rcu_dereference(server.headers);
 		printk(KERN_INFO "CORS: %d\nContent-Type: %d\nTimeout:%d",
 				headers->cors, headers->content_type, headers->timeout);
 
-		timeout = headers->timeout;
+		timeout = headers->timeout;*/
 		rcu_read_unlock();
 
-		msleep(timeout*1000);
+		msleep(RECOVERY_SLEEP_TIME*1000);
 	}
 
 	do_exit(0);
