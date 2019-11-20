@@ -138,7 +138,7 @@ static inline int setup_client(void *data) {
 	do_exit(0);
 }
 
-int set_mode_recovery(void *data) {
+static inline int set_mode_recovery(void *data) {
 	struct state *old_state;
 	struct state *new_state;
 	bool status = *(bool*)data;
@@ -164,7 +164,7 @@ exit:
 }
 
 static int __init http_server_rcu_init(void) {
-	if(!initialize_server()) {
+	if(initialize_server()) {
 		return -EFAULT;
 	}
 	printk(KERN_ERR "Initializing server!");
