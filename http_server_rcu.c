@@ -133,9 +133,7 @@ static inline void send_data(void) {
 /*
  * Client thread */
 static inline int setup_client(void *data) {
-	struct web_data *web_data;
 	bool is_in_recovery;
-	int timeout;
 
 	while(!kthread_should_stop()) {
 		rcu_read_lock();
@@ -238,7 +236,7 @@ static inline int recover_server(void) {
  * */
 static inline int recover_system_thread(void *data) {
 	while(!kthread_should_stop()) {
-		msleep(TIME_BEFORE_RECOVERY);
+		msleep(TIME_BEFORE_RECOVERY*1000);
 
 		set_mode_recovery(true);
 
@@ -258,10 +256,14 @@ static inline int recover_system_thread(void *data) {
 		 * */
 		synchronize_rcu();
 
+		printk(KERN_INFO "HTTP-SERVER: Starting server secovery\n");
+
 		/*
 		 * Fix the corrupt data.
 		 * */
 		recover_server();
+
+		printk(KERN_INFO "HTTP-SERVER: Server successfully recovered\n");
 
 		/*
 		 * Recovery is done. Readers can now access server.web_data.
@@ -275,11 +277,54 @@ static inline int recover_system_thread(void *data) {
 	do_exit(0);
 }
 
+static inline int updater_thread(void *data) {
+	struct web_data *web_data;
+	struct web_data *new_web_data;
+	bool is_in_recovery;
+
+	rcu_read_lock();
+	if(rcu_dereference(server.state)->is_in_recovery) {
+		rcu_read_unlock();
+		goto exit;
+	}
+	rcu_read_unlock();
+
+	spin_lock(&server_mutex);
+	web_data = rcu_dereference_protected(server.web_data,
+			lockdep_is_held(&server_mutex));
+
+	new_web_data = kmalloc(sizeof(*new_web_data), GFP_KERNEL);
+
+	if(new_web_data == NULL) {
+		spin_unlock(&server_mutex);
+		return -ENOMEM;
+	}
+
+	new_web_data->message = (web_data->message)+3;
+	rcu_head_init(&new_web_data->rcu);
+	rcu_assign_pointer(server.web_data, new_web_data);
+	spin_unlock(&server_mutex);
+
+	kfree_rcu(web_data, rcu);
+
+	while(!kthread_should_stop()) {
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule();
+	}
+
+exit:
+	do_exit(0);
+}
+
 static int __init http_server_rcu_init(void) {
 	if(initialize_server()) {
 		return -EFAULT;
 	}
 	printk(KERN_ERR "Initializing server!");
+	printk(KERN_ERR "Initial Server Status\nMessage: %d\nRecovery: %d\nTimestamp: %d\n",
+			server.web_data->message,
+			server.state->is_in_recovery,
+			server.update_timestamp->time);
 	return 0;
 }
 
