@@ -12,6 +12,7 @@
 #define TIME_TO_RECOVER 25
 #define TIME_BEFORE_RECOVERY 60
 #define NUM_CLIENTS 3
+#define TIMEOUT_MULTIPLIER 3
 
 struct state {
 	bool is_in_recovery;
@@ -41,8 +42,8 @@ struct server {
 };
 
 static struct server server;
-DEFINE_SPINLOCK(server_mutex);
-DEFINE_SPINLOCK(state_mutex);
+static DEFINE_SPINLOCK(server_mutex);
+static DEFINE_SPINLOCK(state_mutex);
 
 static inline int initialize_time(void) {
 	struct time *time;
@@ -117,19 +118,19 @@ err:
 /*
  * This probably means we are in recovery, hence server.web_data may be in an
  * inconsistent state hence cannot dereference the data. */
-static inline void send_data_carefully(void) {
-	printk(KERN_INFO "Data:\nStatus Code: 438\nMode: Recovery\n");
+static inline void send_data_carefully(int id) {
+	printk(KERN_INFO "Data:\nid: %d\nStatus Code: 438\nMode: Recovery\n", id);
 }
 
 /*
  * Conditions are normal, and we are being executed in a read section
  * we can dereference the data and send it. */
-static inline void send_data(void) {
+static inline void send_data(int id) {
 	struct web_data *web_data = rcu_dereference_check(server.web_data,
 							rcu_read_lock_held());
 
-	printk(KERN_INFO "Data:\nStatus Code: 200\nMode: Normal\nData: %d\n",
-			web_data->message);
+	printk(KERN_INFO "Data:\nid: %d\nStatus Code: 200\nMode: Normal\nData: %d\n",
+			id, web_data->message);
 }
 
 /*
@@ -142,9 +143,9 @@ static inline int setup_client(void *data) {
 		rcu_read_lock();
 		is_in_recovery = rcu_dereference(server.state)->is_in_recovery;
 		if(is_in_recovery) {
-			send_data_carefully();
+			send_data_carefully(timeout/TIMEOUT_MULTIPLIER);
 		} else {
-			send_data();
+			send_data(timeout/TIMEOUT_MULTIPLIER);
 		}
 		rcu_read_unlock();
 	
@@ -185,6 +186,7 @@ static inline int recover_server(void) {
 	new_web_data = kmalloc(sizeof(*new_web_data), GFP_KERNEL);
 
 	if(new_web_data == NULL) {
+		spin_unlock(&server_mutex);
 		return -ENOMEM;
 	}
 
@@ -335,7 +337,7 @@ static inline void clean_up_threads(void) {
  * @n - number of threads to create
  * */
 static inline int initialize_clients(int n) {
-	int i, timeout;
+	int i, *timeout;
 	char *name;
 	struct client *client;
 
@@ -351,9 +353,12 @@ static inline int initialize_clients(int n) {
 		}
 
 		sprintf(name, "thread%d", i);
-		timeout = (i+1) * 5;
 
-		client->task = kthread_create(setup_client, (void*)&timeout, name);
+		timeout = kmalloc(sizeof(int), GFP_ATOMIC);
+		*timeout = (i+1) * TIMEOUT_MULTIPLIER;
+
+		client->id = i+1;
+		client->task = kthread_create(setup_client, (void*)timeout, name);
 
 		if(client->task == NULL) {
 			clean_up_threads();
@@ -366,6 +371,36 @@ static inline int initialize_clients(int n) {
 	return 0;
 }
 
+static inline int initialize_crash(void) {
+	struct client *client;
+	char *name;
+
+	name = kmalloc(128, GFP_ATOMIC);
+	if(name ==  NULL) return -ENOMEM;
+	sprintf(name, "recovery_thread_rcu");
+
+	client = kmalloc(sizeof(*client), GFP_KERNEL);
+
+	if(client == NULL) {
+		goto no_mem;
+	}
+
+	client->id = 7234;
+	client->task = kthread_create(recover_system_thread, NULL, name);
+
+	if(client->task == NULL) {
+		goto no_mem;
+	}
+
+	list_add(&client->clients_list, &server.clients);
+
+	return 0;
+
+no_mem:
+	clean_up_threads();
+	return -ENOMEM;
+}
+
 static int __init http_server_rcu_init(void) {
 	struct client *client;
 
@@ -374,6 +409,10 @@ static int __init http_server_rcu_init(void) {
 	}
 
 	if(initialize_clients(NUM_CLIENTS)) {
+		return -EFAULT;
+	}
+
+	if(initialize_crash()) {
 		return -EFAULT;
 	}
 
