@@ -9,8 +9,9 @@
 #include <linux/delay.h>
 
 #define RECOVERY_SLEEP_TIME 30
-#define TIME_TO_RECOVER 10
-#define TIME_BEFORE_RECOVERY 10
+#define TIME_TO_RECOVER 25
+#define TIME_BEFORE_RECOVERY 60
+#define NUM_CLIENTS 3
 
 struct state {
 	bool is_in_recovery;
@@ -23,7 +24,8 @@ struct time {
 
 struct client {
 	int id;
-	struct list_head __rcu *clients_list;
+	struct task_struct	*task;
+	struct list_head	clients_list;
 };
 
 struct web_data {
@@ -133,6 +135,7 @@ static inline void send_data(void) {
 /*
  * Client thread */
 static inline int setup_client(void *data) {
+	int timeout = *(int*)data;
 	bool is_in_recovery;
 
 	while(!kthread_should_stop()) {
@@ -145,10 +148,10 @@ static inline int setup_client(void *data) {
 		}
 		rcu_read_unlock();
 	
-		msleep(RECOVERY_SLEEP_TIME*1000);
+		msleep_interruptible(timeout*1000);
 	}
 
-	do_exit(0);
+	return 0;
 }
 
 static inline void set_mode_recovery(bool flag) {
@@ -208,7 +211,7 @@ static inline int recover_server(void) {
 	 * This is a simple example, but sadly recovering a failed system
 	 * doesn't take a few nanoseconds.
 	 * */
-	msleep(TIME_TO_RECOVER*1000);
+	msleep_interruptible(TIME_TO_RECOVER*1000);
 
 	update_timestamp = rcu_dereference_protected(server.update_timestamp,
 			lockdep_is_held(&server_mutex));
@@ -236,8 +239,9 @@ static inline int recover_server(void) {
  * */
 static inline int recover_system_thread(void *data) {
 	while(!kthread_should_stop()) {
-		msleep(TIME_BEFORE_RECOVERY*1000);
+		msleep_interruptible(TIME_BEFORE_RECOVERY*1000);
 
+		printk(KERN_INFO "HTTP-SERVER: [FATAL] Some error occured. Initializing recovery procedure.\n");
 		set_mode_recovery(true);
 
 		/*
@@ -274,13 +278,12 @@ static inline int recover_system_thread(void *data) {
 		schedule();
 	}
 
-	do_exit(0);
+	return 0;
 }
 
 static inline int updater_thread(void *data) {
 	struct web_data *web_data;
 	struct web_data *new_web_data;
-	bool is_in_recovery;
 
 	rcu_read_lock();
 	if(rcu_dereference(server.state)->is_in_recovery) {
@@ -313,23 +316,87 @@ static inline int updater_thread(void *data) {
 	}
 
 exit:
-	do_exit(0);
+	return 0;
+}
+
+static inline void clean_up_threads(void) {
+	struct client *client, *tclient;
+	list_for_each_entry_safe(client, tclient, &server.clients,
+			clients_list) {
+		if(client->task != NULL) {
+			kthread_stop(client->task);
+		}
+		kfree(client);
+	}
+}
+
+/*
+ * Initializes client processes
+ * @n - number of threads to create
+ * */
+static inline int initialize_clients(int n) {
+	int i, timeout;
+	char *name;
+	struct client *client;
+
+	name = kmalloc(8, GFP_KERNEL);
+	if(name == NULL) return -ENOMEM;
+
+	for(i = 0; i < n; i++) {
+		client = kmalloc(sizeof(*client), GFP_KERNEL);
+
+		if(client == NULL) {
+			clean_up_threads();
+			return -ENOMEM;
+		}
+
+		sprintf(name, "thread%d", i);
+		timeout = (i+1) * 5;
+
+		client->task = kthread_create(setup_client, (void*)&timeout, name);
+
+		if(client->task == NULL) {
+			clean_up_threads();
+			return -ENOMEM;
+		}
+
+		list_add(&client->clients_list, &server.clients);
+	}
+
+	return 0;
 }
 
 static int __init http_server_rcu_init(void) {
+	struct client *client;
+
 	if(initialize_server()) {
 		return -EFAULT;
 	}
+
+	if(initialize_clients(NUM_CLIENTS)) {
+		return -EFAULT;
+	}
+
 	printk(KERN_ERR "Initializing server!");
 	printk(KERN_ERR "Initial Server Status\nMessage: %d\nRecovery: %d\nTimestamp: %d\n",
 			server.web_data->message,
 			server.state->is_in_recovery,
 			server.update_timestamp->time);
+
+
+	list_for_each_entry(client, &server.clients, clients_list) {
+		if(client->task) {
+			wake_up_process(client->task);
+		}
+	}
+
 	return 0;
 }
 
 static void __exit http_server_rcu_exit(void) {
 	printk(KERN_ERR "Destroying server!");
+	clean_up_threads();
+	printk(KERN_ERR "Cleanup done!");
 }
 
 module_init(http_server_rcu_init);
