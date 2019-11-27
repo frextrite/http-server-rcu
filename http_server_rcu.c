@@ -12,7 +12,7 @@
 #define TIME_TO_RECOVER 25
 #define TIME_BEFORE_RECOVERY 60
 #define NUM_CLIENTS 3
-#define TIMEOUT_MULTIPLIER 3
+#define TIMEOUT_MULTIPLIER 5
 
 struct state {
 	bool is_in_recovery;
