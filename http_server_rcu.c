@@ -11,6 +11,7 @@
 #define TIME_BEFORE_RECOVERY 60
 #define NUM_CLIENTS 3
 #define TIMEOUT_MULTIPLIER 5
+#define UPDATE_FREQUENCY 20
 
 struct state {
 	bool is_in_recovery;
@@ -188,7 +189,7 @@ static inline int recover_server(void) {
 		return -ENOMEM;
 	}
 
-	new_web_data->message = (10*(web_data->message));
+	new_web_data->message = (2*(web_data->message));
 	rcu_head_init(&new_web_data->rcu);
 
 	rcu_assign_pointer(server.web_data, new_web_data);
@@ -313,6 +314,7 @@ static inline int updater_thread(void *data) {
 		rcu_assign_pointer(server.web_data, new_web_data);
 		spin_unlock(&server_mutex);
 
+		printk(KERN_INFO "Updated value to %d", new_web_data->message);
 		kfree_rcu(web_data, rcu);
 		rcu_read_unlock();
 
@@ -320,9 +322,8 @@ static inline int updater_thread(void *data) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule();
 	}*/
-		printk(KERN_INFO "Updated value!");
 try_again:
-		msleep_interruptible(TIMEOUT_MULTIPLIER*1000);
+		msleep_interruptible(UPDATE_FREQUENCY*1000);
 	}
 
 	return 0;
