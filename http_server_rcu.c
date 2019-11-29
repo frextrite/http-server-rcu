@@ -285,37 +285,41 @@ static inline int updater_thread(void *data) {
 	struct web_data *web_data;
 	struct web_data *new_web_data;
 
-	rcu_read_lock();
-	if(rcu_dereference(server.state)->is_in_recovery) {
-		rcu_read_unlock();
-		goto exit;
-	}
-
-	spin_lock(&server_mutex);
-	web_data = rcu_dereference_protected(server.web_data,
-			lockdep_is_held(&server_mutex));
-
-	new_web_data = kmalloc(sizeof(*new_web_data), GFP_KERNEL);
-
-	if(new_web_data == NULL) {
-		spin_unlock(&server_mutex);
-		return -ENOMEM;
-	}
-
-	new_web_data->message = (web_data->message)+3;
-	rcu_head_init(&new_web_data->rcu);
-	rcu_assign_pointer(server.web_data, new_web_data);
-	spin_unlock(&server_mutex);
-
-	kfree_rcu(web_data, rcu);
-	rcu_read_unlock();
-
 	while(!kthread_should_stop()) {
+		rcu_read_lock();
+		if(rcu_dereference(server.state)->is_in_recovery) {
+			rcu_read_unlock();
+			goto try_again;
+		}
+
+		spin_lock(&server_mutex);
+		web_data = rcu_dereference_protected(server.web_data,
+				lockdep_is_held(&server_mutex));
+
+		new_web_data = kmalloc(sizeof(*new_web_data), GFP_KERNEL);
+
+		if(new_web_data == NULL) {
+			spin_unlock(&server_mutex);
+			goto try_again;
+		}
+
+		new_web_data->message = (web_data->message)+3;
+		rcu_head_init(&new_web_data->rcu);
+		rcu_assign_pointer(server.web_data, new_web_data);
+		spin_unlock(&server_mutex);
+
+		kfree_rcu(web_data, rcu);
+		rcu_read_unlock();
+
+	/*while(!kthread_should_stop()) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule();
+	}*/
+		printk(KERN_INFO "Updated value!");
+try_again:
+		msleep_interruptible(TIMEOUT_MULTIPLIER*1000);
 	}
 
-exit:
 	return 0;
 }
 
