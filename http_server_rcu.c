@@ -300,6 +300,7 @@ static inline int updater_thread(void *data) {
 
 		if(new_web_data == NULL) {
 			spin_unlock(&server_mutex);
+			rcu_read_unlock();
 			goto try_again;
 		}
 
@@ -403,6 +404,31 @@ no_mem:
 	return -ENOMEM;
 }
 
+static inline int initialize_updater(void) {
+	struct client *client;
+
+	client = kmalloc(sizeof(*client), GFP_KERNEL);
+
+	if(client == NULL) {
+		return -ENOMEM;
+	}
+
+	client->id = 5243;
+	client->task = kthread_create(updater_thread, NULL, "updater_http");
+
+	if(client->task == NULL) {
+		goto no_mem;
+	}
+
+	list_add(&client->clients_list, &server.clients);
+
+	return 0;
+
+no_mem:
+	clean_up_threads();
+	return -ENOMEM;
+}
+
 static int __init http_server_rcu_init(void) {
 	struct client *client;
 
@@ -415,6 +441,10 @@ static int __init http_server_rcu_init(void) {
 	}
 
 	if(initialize_crash()) {
+		return -EFAULT;
+	}
+
+	if(initialize_updater()) {
 		return -EFAULT;
 	}
 
