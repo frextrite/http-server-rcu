@@ -2,8 +2,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/rculist.h>
-#include <linux/rcupdate.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
@@ -292,7 +290,6 @@ static inline int updater_thread(void *data) {
 		rcu_read_unlock();
 		goto exit;
 	}
-	rcu_read_unlock();
 
 	spin_lock(&server_mutex);
 	web_data = rcu_dereference_protected(server.web_data,
@@ -311,6 +308,7 @@ static inline int updater_thread(void *data) {
 	spin_unlock(&server_mutex);
 
 	kfree_rcu(web_data, rcu);
+	rcu_read_unlock();
 
 	while(!kthread_should_stop()) {
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -440,3 +438,4 @@ static void __exit http_server_rcu_exit(void) {
 
 module_init(http_server_rcu_init);
 module_exit(http_server_rcu_exit);
+MODULE_LICENSE("GPL");
