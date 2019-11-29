@@ -188,7 +188,7 @@ static inline int recover_server(void) {
 		return -ENOMEM;
 	}
 
-	new_web_data->message = (1<<(web_data->message));
+	new_web_data->message = (10*(web_data->message));
 	rcu_head_init(&new_web_data->rcu);
 
 	rcu_assign_pointer(server.web_data, new_web_data);
@@ -281,6 +281,10 @@ static inline int recover_system_thread(void *data) {
 	return 0;
 }
 
+/*
+ * Code run by updater threads.
+ * Protection using RCU primitives.
+ * */
 static inline int updater_thread(void *data) {
 	struct web_data *web_data;
 	struct web_data *new_web_data;
